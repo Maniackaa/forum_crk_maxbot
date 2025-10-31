@@ -465,8 +465,8 @@ async def cmd_start(event: MessageCreated):
             "Когда - 14 ноября 2025 г.\n"
             "Где - Ресурсный молодежный центр\n"
             "г. Сыктывкар, ул. Первомайская, д. 72, 4 этаж\n"
-            "Программа форума - https://olddigital.rkomi.ru/uploads/documents/programa_it_foruma_na_sayt_2025-10-23_16-15-15.pdf\n"
-            "Сайт форума - https://olddigital.rkomi.ru/event/#visit"
+            "Программа форума - <a href=\"https://olddigital.rkomi.ru/uploads/documents/programa_it_foruma_na_sayt_2025-10-23_16-15-15.pdf\">программа форума</a>\n"
+            "Сайт форума - <a href=\"https://olddigital.rkomi.ru/event/#visit\">сайт форума</a>"
         )
         
         # Отправляем сообщение с link-кнопкой "Зарегистрироваться"
