@@ -16,7 +16,7 @@ if [ "$EUID" -ne 0 ]; then
 fi
 
 # Путь к директории бота
-BOT_DIR="/opt/forum-crk-maxbot"
+BOT_DIR="/root/maxbot/forum_crk_maxbot"
 SERVICE_FILE="forum-crk-maxbot.service"
 
 # Проверка директории

@@ -4,11 +4,11 @@ After=network.target
 
 [Service]
 Type=simple
-User=www-data
-Group=www-data
-WorkingDirectory=/opt/forum-crk-maxbot
-Environment="PATH=/opt/forum-crk-maxbot/.venv/bin"
-ExecStart=/opt/forum-crk-maxbot/.venv/bin/python /opt/forum-crk-maxbot/main.py
+User=root
+Group=root
+WorkingDirectory=/root/maxbot/forum_crk_maxbot
+Environment="PATH=/root/maxbot/forum_crk_maxbot/.venv/bin"
+ExecStart=/root/maxbot/forum_crk_maxbot/.venv/bin/python /root/maxbot/forum_crk_maxbot/main.py
 Restart=always
 RestartSec=10
 StandardOutput=journal
