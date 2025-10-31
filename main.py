@@ -116,30 +116,64 @@ async def save_user_states():
                     pass
 
 
-def save_user_id(user_id: int, chat_id: int = None):
-    """Сохранение ID пользователя и chat_id в базу"""
-    db = load_users_db()
-    
-    # Инициализируем структуру для пользователей с chat_id
-    if "users" not in db:
-        db["users"] = {}
-    
-    # Сохраняем или обновляем информацию о пользователе
-    if user_id not in db["users"]:
-        db["users"][str(user_id)] = {"user_id": user_id}
-        # Добавляем в старый список для обратной совместимости
-        if user_id not in db["user_ids"]:
-            db["user_ids"].append(user_id)
-    
-    # Обновляем chat_id, если передан
-    if chat_id:
-        db["users"][str(user_id)]["chat_id"] = chat_id
-    
+async def save_user_id(user_id: int, chat_id: int = None):
+    """Сохранение ID пользователя и chat_id в базу (асинхронная версия с блокировкой)"""
     try:
-        with open(USERS_DB_FILE, 'w', encoding='utf-8') as f:
-            json.dump(db, f, ensure_ascii=False, indent=2)
+        async with _users_file_lock:
+            db = load_users_db()
+            
+            # Инициализируем структуру для пользователей с chat_id
+            if "users" not in db:
+                db["users"] = {}
+            
+            # Сохраняем или обновляем информацию о пользователе
+            if str(user_id) not in db["users"]:
+                db["users"][str(user_id)] = {"user_id": user_id}
+                # Добавляем в старый список для обратной совместимости
+                if "user_ids" not in db:
+                    db["user_ids"] = []
+                if user_id not in db["user_ids"]:
+                    db["user_ids"].append(user_id)
+            
+            # Обновляем chat_id, если передан
+            if chat_id:
+                db["users"][str(user_id)]["chat_id"] = chat_id
+            
+            # Используем временный файл для атомарной записи
+            temp_file = USERS_DB_FILE + '.tmp'
+            try:
+                with open(temp_file, 'w', encoding='utf-8') as f:
+                    # Блокировка файла для записи (Linux/Unix)
+                    try:
+                        fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+                        try:
+                            json.dump(db, f, ensure_ascii=False, indent=2)
+                            f.flush()
+                            os.fsync(f.fileno())  # Принудительная запись на диск
+                        finally:
+                            fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+                    except (OSError, AttributeError, IOError):
+                        # Если fcntl не работает, просто записываем
+                        json.dump(db, f, ensure_ascii=False, indent=2)
+                        f.flush()
+                        os.fsync(f.fileno())
+                
+                # Атомарное переименование
+                os.replace(temp_file, USERS_DB_FILE)
+            except Exception as e:
+                print(f"Ошибка сохранения базы пользователей: {e}")
+                import traceback
+                traceback.print_exc()
+                # Удаляем временный файл при ошибке
+                if os.path.exists(temp_file):
+                    try:
+                        os.remove(temp_file)
+                    except:
+                        pass
     except Exception as e:
-        print(f"Ошибка сохранения базы пользователей: {e}")
+        print(f"Критическая ошибка в save_user_id: {e}")
+        import traceback
+        traceback.print_exc()
 
 
 def get_chat_id_from_event(event):
@@ -410,43 +444,69 @@ async def cmd_send_feedback(event: MessageCreated):
 @dp.message_created(Command('start'))
 async def cmd_start(event: MessageCreated):
     """Приветственное сообщение"""
-    user_id = event.message.sender.user_id
-    chat_id = get_chat_id_from_event(event)
-    print(f"Команда /start получена от пользователя {user_id}, chat_id: {chat_id}")
-    # Сохраняем ID пользователя и chat_id для рассылки
-    await save_user_id(user_id, chat_id)
-    
-    welcome_text = (
-        "Рады приветствовать вас на форуме «Цифровая республика. ИТ-герои»\n\n"
-        "Это будет точка сборки IT-сообщества, где можно пообщаться с будущими работодателями, "
-        "вдохновиться историями успеха и определиться со своей траекторией в IT.\n\n"
-        "Когда - 14 ноября 2025 г.\n"
-        "Где - Ресурсный молодежный центр\n"
-        "г. Сыктывкар, ул. Первомайская, д. 72, 4 этаж\n"
-        "Программа форума - https://olddigital.rkomi.ru/uploads/documents/programa_it_foruma_na_sayt_2025-10-23_16-15-15.pdf\n"
-        "Сайт форума - https://olddigital.rkomi.ru/event/#visit"
-    )
-    
-    # Отправляем сообщение с link-кнопкой "Зарегистрироваться"
-    buttons = [
-        [
-            {
-                "type": "link",
-                "text": "Зарегистрироваться",
-                "url": REGISTRATION_URL
-            }
-        ],
-        [
-            {
-                "type": "callback",
-                "text": "Я зарегистрировался",
-                "payload": "registered"
-            }
+    try:
+        user_id = event.message.sender.user_id
+        chat_id = get_chat_id_from_event(event)
+        print(f"Команда /start получена от пользователя {user_id}, chat_id: {chat_id}")
+        
+        # Сохраняем ID пользователя и chat_id для рассылки
+        try:
+            await save_user_id(user_id, chat_id)
+        except Exception as e:
+            print(f"Ошибка сохранения пользователя {user_id}: {e}")
+            import traceback
+            traceback.print_exc()
+            # Продолжаем работу даже если сохранение не удалось
+        
+        welcome_text = (
+            "Рады приветствовать вас на форуме «Цифровая республика. ИТ-герои»\n\n"
+            "Это будет точка сборки IT-сообщества, где можно пообщаться с будущими работодателями, "
+            "вдохновиться историями успеха и определиться со своей траекторией в IT.\n\n"
+            "Когда - 14 ноября 2025 г.\n"
+            "Где - Ресурсный молодежный центр\n"
+            "г. Сыктывкар, ул. Первомайская, д. 72, 4 этаж\n"
+            "Программа форума - https://olddigital.rkomi.ru/uploads/documents/programa_it_foruma_na_sayt_2025-10-23_16-15-15.pdf\n"
+            "Сайт форума - https://olddigital.rkomi.ru/event/#visit"
+        )
+        
+        # Отправляем сообщение с link-кнопкой "Зарегистрироваться"
+        buttons = [
+            [
+                {
+                    "type": "link",
+                    "text": "Зарегистрироваться",
+                    "url": REGISTRATION_URL
+                }
+            ],
+            [
+                {
+                    "type": "callback",
+                    "text": "Я зарегистрировался",
+                    "payload": "registered"
+                }
+            ]
         ]
-    ]
-    
-    chat_id = get_chat_id_from_event(event)
-    await send_message_with_buttons(chat_id, welcome_text, buttons)
+        
+        # Проверяем наличие http_session перед отправкой
+        if not http_session:
+            print("⚠️ Ошибка: http_session не инициализирован! Бот еще не полностью запущен.")
+            await event.message.answer(welcome_text)
+            return
+        
+        result = await send_message_with_buttons(chat_id, welcome_text, buttons)
+        if not result:
+            # Fallback: используем стандартный метод отправки
+            await event.message.answer(welcome_text)
+            
+    except Exception as e:
+        print(f"Критическая ошибка в cmd_start: {e}")
+        import traceback
+        traceback.print_exc()
+        # Пытаемся отправить хотя бы простое сообщение
+        try:
+            await event.message.answer("Произошла ошибка при обработке команды. Попробуйте позже.")
+        except:
+            pass
 
 
 
