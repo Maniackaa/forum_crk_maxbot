@@ -7,8 +7,8 @@ Type=simple
 User=root
 Group=root
 WorkingDirectory=/root/maxbot/forum_crk_maxbot
-Environment="PATH=/root/maxbot/forum_crk_maxbot/.venv/bin"
-ExecStart=/root/maxbot/forum_crk_maxbot/.venv/bin/python /root/maxbot/forum_crk_maxbot/main.py
+Environment="PATH=/root/maxbot/forum_crk_maxbot/venv/bin"
+ExecStart=/root/maxbot/forum_crk_maxbot/venv/bin/python /root/maxbot/forum_crk_maxbot/main.py
 Restart=always
 RestartSec=10
 StandardOutput=journal
