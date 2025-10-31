@@ -8,7 +8,9 @@ env/
 venv/
 .venv/
 ENV/
-
+users_db.json
+user_states.json
+forum_data.xlsx
 # Environment variables
 .env
 .env.local
