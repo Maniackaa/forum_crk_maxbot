@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+ENV/
+
+# Environment variables
+.env
+.env.local
+
+# Excel файлы с данными (опционально, можно убрать если хотите версионировать)
+*.xlsx
+!forum_data_example.xlsx
+
+# User database
+users_db.json
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
