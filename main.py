@@ -2,6 +2,7 @@ import os
 import asyncio
 import json
 import aiohttp
+import fcntl  # для блокировок файлов на Linux/Unix
 from maxapi import Bot, Dispatcher
 from maxapi.types import BotStarted, Command, MessageCreated, MessageCallback, CallbackButton, LinkButton
 from config import BOT_TOKEN, REGISTRATION_URL, FORUM_SITE_URL, QUESTION_FORM_URL, TRACK_IMAGES
@@ -26,6 +27,11 @@ STATES_DB_FILE = "user_states.json"
 # Множество обработанных callback_id для защиты от повторной обработки
 processed_callbacks = set()
 
+# Блокировки для синхронизации доступа к файлам
+_states_file_lock = asyncio.Lock()
+_users_file_lock = asyncio.Lock()
+_excel_file_lock = asyncio.Lock()
+
 
 def load_users_db():
     """Загрузка базы пользователей из файла"""
@@ -39,12 +45,22 @@ def load_users_db():
 
 
 def load_user_states():
-    """Загрузка состояний пользователей из файла"""
+    """Загрузка состояний пользователей из файла (синхронная версия для внутреннего использования)"""
     global user_states
     try:
         if os.path.exists(STATES_DB_FILE):
             with open(STATES_DB_FILE, 'r', encoding='utf-8') as f:
-                loaded_states = json.load(f)
+                # Блокировка файла для чтения (Linux/Unix)
+                try:
+                    fcntl.flock(f.fileno(), fcntl.LOCK_SH)
+                    try:
+                        loaded_states = json.load(f)
+                    finally:
+                        fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+                except (OSError, AttributeError):
+                    # Если fcntl не работает (Windows), просто читаем
+                    loaded_states = json.load(f)
+                
                 # Преобразуем строковые ключи обратно в int для user_id
                 user_states = {}
                 for key, value in loaded_states.items():
@@ -61,18 +77,43 @@ def load_user_states():
         user_states = {}
 
 
-def save_user_states():
-    """Сохранение состояний пользователей в файл"""
-    try:
-        # Преобразуем int ключи в строки для JSON
-        states_to_save = {}
-        for key, value in user_states.items():
-            states_to_save[str(key)] = value
-        
-        with open(STATES_DB_FILE, 'w', encoding='utf-8') as f:
-            json.dump(states_to_save, f, ensure_ascii=False, indent=2)
-    except Exception as e:
-        print(f"Ошибка сохранения состояний пользователей: {e}")
+async def save_user_states():
+    """Сохранение состояний пользователей в файл (асинхронная версия с блокировкой)"""
+    async with _states_file_lock:
+        try:
+            # Преобразуем int ключи в строки для JSON
+            states_to_save = {}
+            for key, value in user_states.items():
+                states_to_save[str(key)] = value
+            
+            # Используем временный файл для атомарной записи
+            temp_file = STATES_DB_FILE + '.tmp'
+            with open(temp_file, 'w', encoding='utf-8') as f:
+                # Блокировка файла для записи (Linux/Unix)
+                try:
+                    fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+                    try:
+                        json.dump(states_to_save, f, ensure_ascii=False, indent=2)
+                        f.flush()
+                        os.fsync(f.fileno())  # Принудительная запись на диск
+                    finally:
+                        fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+                except (OSError, AttributeError):
+                    # Если fcntl не работает (Windows), просто записываем
+                    json.dump(states_to_save, f, ensure_ascii=False, indent=2)
+                    f.flush()
+                    os.fsync(f.fileno())
+            
+            # Атомарное переименование (на Linux это атомарная операция)
+            os.replace(temp_file, STATES_DB_FILE)
+        except Exception as e:
+            print(f"Ошибка сохранения состояний пользователей: {e}")
+            # Удаляем временный файл при ошибке
+            if os.path.exists(temp_file):
+                try:
+                    os.remove(temp_file)
+                except:
+                    pass
 
 
 def save_user_id(user_id: int, chat_id: int = None):
@@ -373,7 +414,7 @@ async def cmd_start(event: MessageCreated):
     chat_id = get_chat_id_from_event(event)
     print(f"Команда /start получена от пользователя {user_id}, chat_id: {chat_id}")
     # Сохраняем ID пользователя и chat_id для рассылки
-    save_user_id(user_id, chat_id)
+    await save_user_id(user_id, chat_id)
     
     welcome_text = (
         "Рады приветствовать вас на форуме «Цифровая республика. ИТ-герои»\n\n"
@@ -667,7 +708,6 @@ async def handle_message(event: MessageCreated):
     
     user_id = event.message.sender.user_id
     text = event.message.body.text
-    print(f"Получено сообщение от пользователя {user_id}: {text[:50]}...")
     # В maxapi User имеет first_name и last_name, но не name
     user_name = f"{event.message.sender.first_name} {event.message.sender.last_name or ''}".strip() or "Неизвестный"
     
@@ -694,9 +734,8 @@ async def handle_message(event: MessageCreated):
         if key not in user_states:
             user_states[key] = value
     
-    # Отладка: проверяем состояние пользователя
+    # Проверяем состояние пользователя
     user_state = user_states.get(user_id, "")
-    print(f"[DEBUG] Состояние пользователя {user_id}: '{user_state}'")
     
     # Обработка вопроса больше не нужна - используем яндекс форму
     
@@ -706,7 +745,8 @@ async def handle_message(event: MessageCreated):
         await handle_feedback(event, user_id, user_name)
         return
     
-    print(f"[DEBUG] Сообщение не обработано - пользователь {user_id} не в состоянии ожидания feedback")
+    # Если пользователь не в состоянии ожидания feedback, игнорируем сообщение
+    # (это нормальное поведение - бот обрабатывает только команды и ответы на вопросы)
 
 
 async def handle_feedback(event: MessageCreated, user_id: int, user_name: str):
@@ -738,7 +778,7 @@ async def handle_feedback(event: MessageCreated, user_id: int, user_name: str):
         
         # Переходим ко второму вопросу
         user_states[user_id] = "waiting_feedback_q2"
-        save_user_states()
+        await save_user_states()
         print(f"[DEBUG] Сохранен ответ на вопрос 1: '{text[:50]}...'")
         print(f"[DEBUG] Переход к вопросу 2, состояние: waiting_feedback_q2")
         print(f"[DEBUG] Текущие ответы: q1={feedback_data.get('q1_benefit', 'НЕТ')[:30]}...")
@@ -776,7 +816,7 @@ async def handle_feedback(event: MessageCreated, user_id: int, user_name: str):
                 msg_id = result["message"]["body"].get("mid")
             if msg_id:
                 user_states[f"question_msg_id_{user_id}"] = msg_id
-                save_user_states()
+                await save_user_states()
         
     elif state == "waiting_feedback_q2":
         # Сохраняем ответ на второй вопрос (feedback_data уже загружен выше)
@@ -785,7 +825,7 @@ async def handle_feedback(event: MessageCreated, user_id: int, user_name: str):
         
         # Переходим к третьему вопросу
         user_states[user_id] = "waiting_feedback_q3"
-        save_user_states()
+        await save_user_states()
         print(f"[DEBUG] Сохранен ответ на вопрос 2: '{text[:50]}...'")
         print(f"[DEBUG] Переход к вопросу 3, состояние: waiting_feedback_q3")
         print(f"[DEBUG] Текущие ответы: q1={feedback_data.get('q1_benefit', 'НЕТ')[:30]}..., q2={feedback_data.get('q2_directions', 'НЕТ')[:30]}...")
@@ -819,7 +859,7 @@ async def handle_feedback(event: MessageCreated, user_id: int, user_name: str):
                 msg_id = result["message"]["body"].get("mid")
             if msg_id:
                 user_states[f"question_msg_id_{user_id}"] = msg_id
-                save_user_states()
+                await save_user_states()
         
     elif state == "waiting_feedback_q3":
         # Загружаем сохраненные ответы (на случай если они были потеряны)
@@ -830,7 +870,7 @@ async def handle_feedback(event: MessageCreated, user_id: int, user_name: str):
         # Сохраняем ответ на третий вопрос
         feedback_data["q3_suggestions"] = text
         user_states[f"feedback_{user_id}"] = feedback_data
-        save_user_states()  # Сохраняем промежуточное состояние
+        await save_user_states()  # Сохраняем промежуточное состояние
         
         print(f"[DEBUG] Сохранен ответ на вопрос 3, все ответы собраны")
         print(f"[DEBUG] Собранные ответы:")
@@ -856,7 +896,7 @@ async def handle_feedback(event: MessageCreated, user_id: int, user_name: str):
         print(f"  Q2 (directions): {feedback_data.get('q2_directions', 'НЕТ')[:50]}...")
         print(f"  Q3 (suggestions): {feedback_data.get('q3_suggestions', 'НЕТ')[:50]}...")
         
-        result = excel_manager.save_feedback(
+        result = await excel_manager.save_feedback(
             user_id=str(user_id),
             user_name=user_name,
             feedback_data={
@@ -877,7 +917,7 @@ async def handle_feedback(event: MessageCreated, user_id: int, user_name: str):
             del user_states[user_id]
         if f"feedback_{user_id}" in user_states:
             del user_states[f"feedback_{user_id}"]
-        save_user_states()
+        await save_user_states()
         print(f"[DEBUG] Состояния очищены после сохранения отзыва")
         
         await event.message.answer(
@@ -928,7 +968,7 @@ async def send_feedback_request(user_id: int, chat_id: int):
             msg_id = result["message"]["body"].get("mid")
         if msg_id:
             user_states[f"question_msg_id_{user_id}"] = msg_id
-            save_user_states()
+            await save_user_states()
 
 
 async def handle_cancel_feedback(event: MessageCallback):

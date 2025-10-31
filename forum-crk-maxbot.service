@@ -1,0 +1,24 @@
+[Unit]
+Description=Forum CRK MAX Bot - Бот для регистрации на форуме
+After=network.target
+
+[Service]
+Type=simple
+User=www-data
+Group=www-data
+WorkingDirectory=/opt/forum-crk-maxbot
+Environment="PATH=/opt/forum-crk-maxbot/.venv/bin"
+ExecStart=/opt/forum-crk-maxbot/.venv/bin/python /opt/forum-crk-maxbot/main.py
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=forum-crk-maxbot
+
+# Защита от перезагрузки при слишком частых перезапусках
+StartLimitInterval=300
+StartLimitBurst=5
+
+[Install]
+WantedBy=multi-user.target
+
