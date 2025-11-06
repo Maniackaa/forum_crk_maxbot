@@ -702,7 +702,7 @@ async def handle_track_info(event: MessageCallback, track_key: str):
     if track_data['schedule']:
         text += "Расписание:\n"
         for item in track_data['schedule']:
-            text += f"• {item['time']} - {item['event']}\n"
+            text += f"• {item['time']} - {item['event']}\n\n"
     
     # Отправляем сообщение с кнопками и изображением (если есть)
     buttons = [
