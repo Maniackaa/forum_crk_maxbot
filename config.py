@@ -13,7 +13,7 @@ REGISTRATION_URL = os.getenv("REGISTRATION_URL", "https://olddigital.rkomi.ru/ev
 FORUM_SITE_URL = os.getenv("FORUM_SITE_URL", "https://olddigital.rkomi.ru/event/#visit")
 
 # Ссылка на яндекс форму для вопросов
-QUESTION_FORM_URL = os.getenv("QUESTION_FORM_URL", "")
+QUESTION_FORM_URL = os.getenv("QUESTION_FORM_URL", "https://forms.yandex.ru/u/6911bb6795add5069b7bb518")
 
 # URL изображений для треков (графика)
 TRACK_IMAGES = {
